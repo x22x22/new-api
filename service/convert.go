@@ -913,3 +913,197 @@ func StreamResponseOpenAI2Gemini(openAIResponse *dto.ChatCompletionsStreamRespon
 
 	return geminiResponse
 }
+
+// ChatCompletionsToResponsesRequest converts a chat completions request to responses API format
+// This allows old providers using chat completions to be exposed as responses API
+func ChatCompletionsToResponsesRequest(chatRequest *dto.GeneralOpenAIRequest) (*dto.OpenAIResponsesRequest, error) {
+responsesRequest := &dto.OpenAIResponsesRequest{
+Model:  chatRequest.Model,
+Stream: chatRequest.Stream,
+}
+
+// Convert max_tokens or max_completion_tokens to max_output_tokens
+if chatRequest.MaxCompletionTokens > 0 {
+responsesRequest.MaxOutputTokens = chatRequest.MaxCompletionTokens
+} else if chatRequest.MaxTokens > 0 {
+responsesRequest.MaxOutputTokens = chatRequest.MaxTokens
+}
+
+// Convert temperature
+if chatRequest.Temperature != nil {
+responsesRequest.Temperature = *chatRequest.Temperature
+}
+
+// Convert top_p
+if chatRequest.TopP > 0 {
+responsesRequest.TopP = chatRequest.TopP
+}
+
+// Extract system messages and convert to instructions
+var systemMessages []string
+var nonSystemMessages []dto.Message
+for _, msg := range chatRequest.Messages {
+if msg.Role == "system" || msg.Role == "developer" {
+systemMessages = append(systemMessages, msg.StringContent())
+} else {
+nonSystemMessages = append(nonSystemMessages, msg)
+}
+}
+
+// Set instructions from system messages
+if len(systemMessages) > 0 {
+instructionsStr := strings.Join(systemMessages, "\n")
+instructionsJSON, err := json.Marshal(instructionsStr)
+if err != nil {
+return nil, fmt.Errorf("failed to marshal instructions: %w", err)
+}
+responsesRequest.Instructions = instructionsJSON
+}
+
+// Convert non-system messages to input
+if len(nonSystemMessages) > 0 {
+inputJSON, err := json.Marshal(nonSystemMessages)
+if err != nil {
+return nil, fmt.Errorf("failed to marshal input messages: %w", err)
+}
+responsesRequest.Input = inputJSON
+}
+
+// Convert tools
+if len(chatRequest.Tools) > 0 {
+toolsJSON, err := json.Marshal(chatRequest.Tools)
+if err != nil {
+return nil, fmt.Errorf("failed to marshal tools: %w", err)
+}
+responsesRequest.Tools = toolsJSON
+}
+
+// Convert tool_choice
+if chatRequest.ToolChoice != nil {
+toolChoiceJSON, err := json.Marshal(chatRequest.ToolChoice)
+if err != nil {
+return nil, fmt.Errorf("failed to marshal tool_choice: %w", err)
+}
+responsesRequest.ToolChoice = toolChoiceJSON
+}
+
+// Convert reasoning_effort to reasoning object
+if chatRequest.ReasoningEffort != "" {
+responsesRequest.Reasoning = &dto.Reasoning{
+Effort: chatRequest.ReasoningEffort,
+}
+}
+
+// Convert user
+if chatRequest.User != "" {
+responsesRequest.User = chatRequest.User
+}
+
+// Convert metadata
+if chatRequest.Metadata != nil {
+responsesRequest.Metadata = chatRequest.Metadata
+}
+
+// Convert store
+if chatRequest.Store != nil {
+responsesRequest.Store = chatRequest.Store
+}
+
+return responsesRequest, nil
+}
+
+// ResponsesToChatCompletionsRequest converts a responses API request to chat completions format
+// This allows new clients using responses API to call old providers with chat completions
+func ResponsesToChatCompletionsRequest(responsesReq *dto.OpenAIResponsesRequest) (*dto.GeneralOpenAIRequest, error) {
+chatRequest := &dto.GeneralOpenAIRequest{
+Model:  responsesReq.Model,
+Stream: responsesReq.Stream,
+}
+
+// Convert max_output_tokens to max_completion_tokens
+if responsesReq.MaxOutputTokens > 0 {
+chatRequest.MaxCompletionTokens = responsesReq.MaxOutputTokens
+}
+
+// Convert temperature
+if responsesReq.Temperature > 0 {
+temp := responsesReq.Temperature
+chatRequest.Temperature = &temp
+}
+
+// Convert top_p
+if responsesReq.TopP > 0 {
+chatRequest.TopP = responsesReq.TopP
+}
+
+// Convert instructions to system message
+messages := make([]dto.Message, 0)
+if responsesReq.Instructions != nil {
+var instructionsStr string
+if err := json.Unmarshal(responsesReq.Instructions, &instructionsStr); err == nil && instructionsStr != "" {
+systemMsg := dto.Message{
+Role: "system",
+}
+systemMsg.SetStringContent(instructionsStr)
+messages = append(messages, systemMsg)
+}
+}
+
+// Convert input to messages
+if responsesReq.Input != nil {
+var inputMessages []dto.Message
+if err := json.Unmarshal(responsesReq.Input, &inputMessages); err == nil {
+messages = append(messages, inputMessages...)
+} else {
+// Try to unmarshal as string
+var inputStr string
+if err := json.Unmarshal(responsesReq.Input, &inputStr); err == nil && inputStr != "" {
+userMsg := dto.Message{
+Role: "user",
+}
+userMsg.SetStringContent(inputStr)
+messages = append(messages, userMsg)
+}
+}
+}
+
+chatRequest.Messages = messages
+
+// Convert tools
+if responsesReq.Tools != nil {
+var tools []dto.ToolCallRequest
+if err := json.Unmarshal(responsesReq.Tools, &tools); err == nil {
+chatRequest.Tools = tools
+}
+}
+
+// Convert tool_choice
+if responsesReq.ToolChoice != nil {
+var toolChoice any
+if err := json.Unmarshal(responsesReq.ToolChoice, &toolChoice); err == nil {
+chatRequest.ToolChoice = toolChoice
+}
+}
+
+// Convert reasoning to reasoning_effort
+if responsesReq.Reasoning != nil && responsesReq.Reasoning.Effort != "" {
+chatRequest.ReasoningEffort = responsesReq.Reasoning.Effort
+}
+
+// Convert user
+if responsesReq.User != "" {
+chatRequest.User = responsesReq.User
+}
+
+// Convert metadata
+if responsesReq.Metadata != nil {
+chatRequest.Metadata = responsesReq.Metadata
+}
+
+// Convert store
+if responsesReq.Store != nil {
+chatRequest.Store = responsesReq.Store
+}
+
+return chatRequest, nil
+}
