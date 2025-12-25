@@ -1108,6 +1108,7 @@ chatRequest.Store = responsesReq.Store
 return chatRequest, nil
 }
 
+
 // ChatCompletionsToResponsesResponse converts a chat completions response to responses API format
 // This allows converting old provider responses to new responses API format
 func ChatCompletionsToResponsesResponse(chatResp *dto.OpenAITextResponse) (*dto.OpenAIResponsesResponse, error) {
@@ -1135,19 +1136,25 @@ CachedTokens: chatResp.Usage.PromptTokensDetails.CachedTokens,
 }
 
 // Convert choices to output
-for _, choice := range chatResp.Choices {
+for i, choice := range chatResp.Choices {
 output := dto.ResponsesOutput{
-Index: choice.Index,
+Type:   "message",
+Role:   "assistant",
+Status: "completed",
 }
 
-// Convert message content to output type and content
-if choice.Message.IsStringContent() {
-output.Type = "message"
-output.Content = choice.Message.StringContent()
-} else {
-// For complex content, use text type
-output.Type = "text"
-output.Content = choice.Message.StringContent()
+// Generate a unique ID for each output
+output.ID = fmt.Sprintf("msg_%d", i)
+
+// Convert message content to ResponsesOutputContent format
+messageContent := choice.Message.StringContent()
+if messageContent != "" {
+output.Content = []dto.ResponsesOutputContent{
+{
+Type: "text",
+Text: messageContent,
+},
+}
 }
 
 // Handle tool calls
@@ -1155,7 +1162,7 @@ toolCalls := choice.Message.ParseToolCalls()
 if len(toolCalls) > 0 {
 output.Type = "function_call"
 // Note: Responses API has different structure for function calls
-// This is a simplified conversion
+// This is a simplified conversion - actual tool call conversion may need more work
 }
 
 responsesResp.Output = append(responsesResp.Output, output)
@@ -1188,18 +1195,31 @@ chatResp.Usage.PromptTokensDetails.CachedTokens = responsesResp.Usage.InputToken
 }
 
 // Convert output to choices
-for _, output := range responsesResp.Output {
+for i, output := range responsesResp.Output {
 choice := dto.OpenAITextResponseChoice{
-Index: output.Index,
+Index: i,
 Message: dto.Message{
-Role: "assistant",
+Role: output.Role,
 },
 FinishReason: "stop",
 }
 
-// Set message content based on output type
-if output.Type == "message" || output.Type == "text" {
-choice.Message.SetStringContent(output.Content)
+// If role is empty, default to assistant
+if choice.Message.Role == "" {
+choice.Message.Role = "assistant"
+}
+
+// Extract text from ResponsesOutputContent array
+if len(output.Content) > 0 {
+var textParts []string
+for _, content := range output.Content {
+if content.Type == "text" && content.Text != "" {
+textParts = append(textParts, content.Text)
+}
+}
+if len(textParts) > 0 {
+choice.Message.SetStringContent(strings.Join(textParts, "\n"))
+}
 }
 
 // Handle other output types as needed
