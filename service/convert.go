@@ -1107,3 +1107,106 @@ chatRequest.Store = responsesReq.Store
 
 return chatRequest, nil
 }
+
+// ChatCompletionsToResponsesResponse converts a chat completions response to responses API format
+// This allows converting old provider responses to new responses API format
+func ChatCompletionsToResponsesResponse(chatResp *dto.OpenAITextResponse) (*dto.OpenAIResponsesResponse, error) {
+responsesResp := &dto.OpenAIResponsesResponse{
+ID:        chatResp.Id,
+Object:    "response",
+Model:     chatResp.Model,
+Status:    "completed",
+Output:    make([]dto.ResponsesOutput, 0),
+CreatedAt: int(common.Interface2Int64(chatResp.Created)),
+}
+
+// Convert usage
+if chatResp.Usage.TotalTokens > 0 {
+responsesResp.Usage = &dto.Usage{
+InputTokens:  chatResp.Usage.PromptTokens,
+OutputTokens: chatResp.Usage.CompletionTokens,
+TotalTokens:  chatResp.Usage.TotalTokens,
+}
+if chatResp.Usage.PromptTokensDetails.CachedTokens > 0 {
+responsesResp.Usage.InputTokensDetails = &dto.InputTokensDetails{
+CachedTokens: chatResp.Usage.PromptTokensDetails.CachedTokens,
+}
+}
+}
+
+// Convert choices to output
+for _, choice := range chatResp.Choices {
+output := dto.ResponsesOutput{
+Index: choice.Index,
+}
+
+// Convert message content to output type and content
+if choice.Message.IsStringContent() {
+output.Type = "message"
+output.Content = choice.Message.StringContent()
+} else {
+// For complex content, use text type
+output.Type = "text"
+output.Content = choice.Message.StringContent()
+}
+
+// Handle tool calls
+toolCalls := choice.Message.ParseToolCalls()
+if len(toolCalls) > 0 {
+output.Type = "function_call"
+// Note: Responses API has different structure for function calls
+// This is a simplified conversion
+}
+
+responsesResp.Output = append(responsesResp.Output, output)
+}
+
+return responsesResp, nil
+}
+
+// ResponsesToChatCompletionsResponse converts a responses API response to chat completions format
+// This allows converting new responses API to old chat completions format
+func ResponsesToChatCompletionsResponse(responsesResp *dto.OpenAIResponsesResponse) (*dto.OpenAITextResponse, error) {
+chatResp := &dto.OpenAITextResponse{
+Id:      responsesResp.ID,
+Model:   responsesResp.Model,
+Object:  "chat.completion",
+Created: int64(responsesResp.CreatedAt),
+Choices: make([]dto.OpenAITextResponseChoice, 0),
+}
+
+// Convert usage
+if responsesResp.Usage != nil {
+chatResp.Usage = dto.Usage{
+PromptTokens:     responsesResp.Usage.InputTokens,
+CompletionTokens: responsesResp.Usage.OutputTokens,
+TotalTokens:      responsesResp.Usage.TotalTokens,
+}
+if responsesResp.Usage.InputTokensDetails != nil {
+chatResp.Usage.PromptTokensDetails.CachedTokens = responsesResp.Usage.InputTokensDetails.CachedTokens
+}
+}
+
+// Convert output to choices
+for _, output := range responsesResp.Output {
+choice := dto.OpenAITextResponseChoice{
+Index: output.Index,
+Message: dto.Message{
+Role: "assistant",
+},
+FinishReason: "stop",
+}
+
+// Set message content based on output type
+if output.Type == "message" || output.Type == "text" {
+choice.Message.SetStringContent(output.Content)
+}
+
+// Handle other output types as needed
+// Note: Some responses API output types don't have direct equivalents in chat completions
+
+chatResp.Choices = append(chatResp.Choices, choice)
+}
+
+return chatResp, nil
+}
