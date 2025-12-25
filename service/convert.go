@@ -1118,7 +1118,7 @@ Object:    "response",
 Model:     chatResp.Model,
 Status:    "completed",
 Output:    make([]dto.ResponsesOutput, 0),
-CreatedAt: int(common.Interface2Int64(chatResp.Created)),
+CreatedAt: int(func() int64 { v, _ := common.Any2Type[int64](chatResp.Created); return v }()),
 }
 
 // Convert usage
